@@ -1,0 +1,249 @@
+[gd_scene load_steps=2 format=2]
+
+[sub_resource type="GDScript" id=1]
+script/source = "extends Control
+
+# Default game server port. Can be any number between 1024 and 49151.
+# Not on the list of registered or common ports as of November 2020:
+# https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers
+const DEFAULT_PORT = 8910
+
+onready var address = $Address
+onready var host_button = $HostButton
+onready var join_button = $JoinButton
+onready var status_ok = $StatusOk
+onready var status_fail = $StatusFail
+onready var port_forward_label = $PortForward
+onready var find_public_ip_button = $FindPublicIP
+
+signal new_player(id)
+signal new_player_point(id, curve)
+
+var peer = null
+var player_ids = []
+
+
+func _ready():
+	# Connect all the callbacks related to networking.
+	get_tree().connect(\"network_peer_connected\", self, \"_player_connected\")
+	get_tree().connect(\"network_peer_disconnected\", self, \"_player_disconnected\")
+	get_tree().connect(\"connected_to_server\", self, \"_connected_ok\")
+	get_tree().connect(\"connection_failed\", self, \"_connected_fail\")
+	get_tree().connect(\"server_disconnected\", self, \"_server_disconnected\")
+
+#### Network callbacks from SceneTree ####
+
+# Callback from SceneTree.
+func _player_connected(_id):
+	if not player_ids.has(_id):
+		player_ids.append(_id)
+		emit_signal(\"new_player\", _id)
+	#get_tree().get_root().add_child(pong)
+	hide()
+
+
+func _player_disconnected(_id):
+	if player_ids.has(_id):
+		player_ids.erase(_id)
+	show()
+	if get_tree().is_network_server():
+		_end_game(\"Client disconnected\")
+	else:
+		_end_game(\"Server disconnected\")
+
+
+# Callback from SceneTree, only for clients (not server).
+func _connected_ok():
+	pass # This function is not needed for this project.
+
+
+# Callback from SceneTree, only for clients (not server).
+func _connected_fail():
+	_set_status(\"Couldn't connect\", false)
+
+	get_tree().set_network_peer(null) # Remove peer.
+	host_button.set_disabled(false)
+	join_button.set_disabled(false)
+
+
+func _server_disconnected():
+	_end_game(\"Server disconnected\")
+
+##### Game creation functions ######
+
+func _end_game(with_error = \"\"):
+	get_tree().set_network_peer(null) # Remove peer.
+	host_button.set_disabled(false)
+	join_button.set_disabled(false)
+
+	_set_status(with_error, false)
+
+
+func _set_status(text, isok):
+	# Simple way to show status.
+	if isok:
+		status_ok.set_text(text)
+		status_fail.set_text(\"\")
+	else:
+		status_ok.set_text(\"\")
+		status_fail.set_text(text)
+
+remote func remote_curve(curve):
+	print(\"Remote curve: \", get_tree().get_rpc_sender_id())
+	emit_signal(\"new_player_point\", get_tree().get_rpc_sender_id(), curve)
+
+func _on_host_pressed():
+	peer = NetworkedMultiplayerENet.new()
+	peer.set_compression_mode(NetworkedMultiplayerENet.COMPRESS_RANGE_CODER)
+	var err = peer.create_server(DEFAULT_PORT, 10) # Maximum of 1 peer, since it's a 2-player game.
+	if err != OK:
+		# Is another server running?
+		_set_status(\"Can't host, address in use.\",false)
+		return
+
+	get_tree().set_network_peer(peer)
+	host_button.set_disabled(true)
+	join_button.set_disabled(true)
+	_set_status(\"Waiting for player...\", true)
+
+	# Only show hosting instructions when relevant.
+	port_forward_label.visible = true
+	find_public_ip_button.visible = true
+
+
+func _on_join_pressed():
+	var ip = address.get_text()
+	if not ip.is_valid_ip_address():
+		_set_status(\"IP address is invalid\", false)
+		return
+
+	peer = NetworkedMultiplayerENet.new()
+	peer.set_compression_mode(NetworkedMultiplayerENet.COMPRESS_RANGE_CODER)
+	peer.create_client(ip, DEFAULT_PORT)
+	get_tree().set_network_peer(peer)
+
+	_set_status(\"Connecting...\", true)
+
+
+func _on_find_public_ip_pressed():
+	OS.shell_open(\"https://icanhazip.com/\")
+"
+
+[node name="Lobby" type="Control"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+margin_left = -320.0
+margin_top = -200.0
+margin_right = 320.0
+margin_bottom = 200.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="Title" type="Label" parent="."]
+margin_left = 210.0
+margin_top = 40.0
+margin_right = 430.0
+margin_bottom = 80.0
+size_flags_horizontal = 2
+size_flags_vertical = 0
+text = "Distributed Whiteboard"
+align = 1
+valign = 1
+
+[node name="LobbyPanel" type="Panel" parent="."]
+margin_left = 210.0
+margin_top = 160.0
+margin_right = 430.0
+margin_bottom = 270.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+script = SubResource( 1 )
+
+[node name="AddressLabel" type="Label" parent="LobbyPanel"]
+margin_left = 10.0
+margin_top = 10.0
+margin_right = 62.0
+margin_bottom = 24.0
+size_flags_horizontal = 2
+size_flags_vertical = 0
+text = "Address"
+
+[node name="Address" type="LineEdit" parent="LobbyPanel"]
+margin_left = 10.0
+margin_top = 30.0
+margin_right = 210.0
+margin_bottom = 54.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+text = "127.0.0.1"
+
+[node name="HostButton" type="Button" parent="LobbyPanel"]
+margin_left = 10.0
+margin_top = 60.0
+margin_right = 90.0
+margin_bottom = 80.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+text = "Host"
+
+[node name="JoinButton" type="Button" parent="LobbyPanel"]
+margin_left = 130.0
+margin_top = 60.0
+margin_right = 210.0
+margin_bottom = 80.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+text = "Join"
+
+[node name="StatusOk" type="Label" parent="LobbyPanel"]
+margin_left = 10.0
+margin_top = 90.0
+margin_right = 210.0
+margin_bottom = 104.0
+size_flags_horizontal = 2
+size_flags_vertical = 0
+custom_colors/font_color = Color( 0, 1, 0.015625, 1 )
+align = 1
+
+[node name="StatusFail" type="Label" parent="LobbyPanel"]
+margin_left = 10.0
+margin_top = 90.0
+margin_right = 210.0
+margin_bottom = 104.0
+size_flags_horizontal = 2
+size_flags_vertical = 0
+custom_colors/font_color = Color( 1, 0, 0, 1 )
+text = "  "
+align = 1
+
+[node name="PortForward" type="Label" parent="LobbyPanel"]
+visible = false
+margin_left = -128.0
+margin_top = 136.0
+margin_right = 124.0
+margin_bottom = 184.0
+custom_constants/line_spacing = 6
+text = "If you want non-LAN clients to connect,
+make sure the port 8910 in UDP
+is forwarded on your router."
+align = 1
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[node name="FindPublicIP" type="LinkButton" parent="LobbyPanel"]
+visible = false
+margin_left = 155.0
+margin_top = 152.0
+margin_right = 328.0
+margin_bottom = 166.0
+text = "Find your public IP address"
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[connection signal="pressed" from="LobbyPanel/HostButton" to="LobbyPanel" method="_on_host_pressed"]
+[connection signal="pressed" from="LobbyPanel/JoinButton" to="LobbyPanel" method="_on_join_pressed"]
+[connection signal="pressed" from="LobbyPanel/FindPublicIP" to="LobbyPanel" method="_on_find_public_ip_pressed"]
